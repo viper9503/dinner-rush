@@ -53,6 +53,8 @@ export const actions = {
   baseline: () => control("/control/load/baseline"),
   stop: () => control("/control/load/stop"),
   setRate: (rps: number) => control(`/control/load/rate?rps=${encodeURIComponent(rps)}`),
+  paymentDown: () => control("/control/downstream/payment/down"),
+  paymentUp: () => control("/control/downstream/payment/up"),
   restaurantDown: () => control("/control/downstream/restaurant/down"),
   restaurantUp: () => control("/control/downstream/restaurant/up"),
   courierDown: () => control("/control/downstream/courier/down"),

@@ -33,6 +33,7 @@ export interface Snapshot {
     dlq: number;
   };
   downstreams: {
+    payment: DownstreamHealth;
     restaurant: DownstreamHealth;
     courier: DownstreamHealth;
   };

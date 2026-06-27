@@ -30,6 +30,7 @@ const EMPTY_SNAPSHOT: Snapshot = {
   retries: { broker_retries: 0, dlq_depth: 0 },
   queues: { advance: 0, retry: 0, dlq: 0 },
   downstreams: {
+    payment: { breaker: "unknown", error_rate: 0, avg_latency_ms: 0, down: false },
     restaurant: { breaker: "unknown", error_rate: 0, avg_latency_ms: 0, down: false },
     courier: { breaker: "unknown", error_rate: 0, avg_latency_ms: 0, down: false },
   },
@@ -132,6 +133,7 @@ export default function App() {
 
       <Controls
         load={snap.load}
+        paymentDown={snap.downstreams.payment.down}
         restaurantDown={snap.downstreams.restaurant.down}
         courierDown={snap.downstreams.courier.down}
         onError={showError}

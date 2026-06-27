@@ -4,6 +4,7 @@ import ActionButton from "./ActionButton";
 
 interface Props {
   load: Snapshot["load"];
+  paymentDown: boolean;
   restaurantDown: boolean;
   courierDown: boolean;
   onError: (msg: string) => void;
@@ -18,6 +19,7 @@ function modeClass(mode: string): string {
 
 export default function Controls({
   load,
+  paymentDown,
   restaurantDown,
   courierDown,
   onError,
@@ -64,6 +66,28 @@ export default function Controls({
             </ActionButton>
             <ActionButton onClick={actions.stop} onError={onError}>
               Stop
+            </ActionButton>
+          </div>
+        </div>
+
+        <div className="control-group">
+          <div className="g-title">Payment provider</div>
+          <div className="btn-row">
+            <ActionButton
+              className="danger"
+              onClick={actions.paymentDown}
+              onError={onError}
+              disabled={paymentDown}
+            >
+              Break Payment
+            </ActionButton>
+            <ActionButton
+              className="restore"
+              onClick={actions.paymentUp}
+              onError={onError}
+              disabled={!paymentDown}
+            >
+              Restore Payment
             </ActionButton>
           </div>
         </div>

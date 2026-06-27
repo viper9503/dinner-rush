@@ -41,6 +41,7 @@ PUSH_SECONDS = PUSH_MS / 1000.0
 WINDOW = 5.0  # throughput averaging window (seconds)
 
 ORCH_URL = env_str("ORCHESTRATOR_URL", "http://orchestrator:8002")
+PAYMENT_URL = env_str("PAYMENT_URL", "http://payment:8007")
 RESTAURANT_URL = env_str("RESTAURANT_URL", "http://restaurant:8003")
 COURIER_URL = env_str("COURIER_URL", "http://courier:8004")
 LOADGEN_URL = env_str("LOADGEN_URL", "http://load-gen:8006")
@@ -62,6 +63,7 @@ def _empty_snapshot() -> dict:
         "retries": {"broker_retries": 0, "dlq_depth": 0},
         "queues": {"advance": 0, "retry": 0, "dlq": 0},
         "downstreams": {
+            "payment": {"breaker": "unknown", "error_rate": 0.0, "avg_latency_ms": 0, "down": False},
             "restaurant": {"breaker": "unknown", "error_rate": 0.0, "avg_latency_ms": 0, "down": False},
             "courier": {"breaker": "unknown", "error_rate": 0.0, "avg_latency_ms": 0, "down": False},
         },
@@ -153,6 +155,7 @@ class Dashboard:
         results = await asyncio.gather(
             self._safe(self._get_json(f"{ORCH_URL}/stats")),
             self._safe(self._get_json(f"{ORCH_URL}/downstreams")),
+            self._safe(self._get_json(f"{PAYMENT_URL}/control")),
             self._safe(self._get_json(f"{RESTAURANT_URL}/control")),
             self._safe(self._get_json(f"{COURIER_URL}/control")),
             self._safe(self._get_json(f"{LOADGEN_URL}/status")),
@@ -160,7 +163,7 @@ class Dashboard:
             self._safe(self._queue_depth("q.order.advance.retry")),
             self._safe(self._queue_depth("q.order.dlq")),
         )
-        stats, down_health, rest_ctl, cour_ctl, load, q_adv, q_retry, q_dlq = results
+        stats, down_health, pay_ctl, rest_ctl, cour_ctl, load, q_adv, q_retry, q_dlq = results
 
         if isinstance(stats, dict):
             snap["orchestrator_up"] = True
@@ -173,12 +176,14 @@ class Dashboard:
             snap["totals"]["ingested"] = sum(snap["states"].values())
 
         if isinstance(down_health, dict):
-            for name in ("restaurant", "courier"):
+            for name in ("payment", "restaurant", "courier"):
                 h = down_health.get(name, {})
                 breaker = (h.get("breaker") or {}).get("state", "unknown")
                 snap["downstreams"][name]["breaker"] = breaker
                 snap["downstreams"][name]["error_rate"] = h.get("error_rate", 0.0)
                 snap["downstreams"][name]["avg_latency_ms"] = h.get("avg_latency_ms", 0)
+        if isinstance(pay_ctl, dict):
+            snap["downstreams"]["payment"]["down"] = bool(pay_ctl.get("down", False))
         if isinstance(rest_ctl, dict):
             snap["downstreams"]["restaurant"]["down"] = bool(rest_ctl.get("down", False))
         if isinstance(cour_ctl, dict):
@@ -281,7 +286,7 @@ async def load_rate(rps: float):
 
 @app.post("/control/downstream/{name}/{action}")
 async def downstream_control(name: str, action: str):
-    base = {"restaurant": RESTAURANT_URL, "courier": COURIER_URL}.get(name)
+    base = {"payment": PAYMENT_URL, "restaurant": RESTAURANT_URL, "courier": COURIER_URL}.get(name)
     if base is None or action not in ("up", "down"):
         return JSONResponse({"error": "bad request"}, status_code=400)
     return await _proxy_post(f"{base}/control/{action}")

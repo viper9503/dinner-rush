@@ -10,6 +10,7 @@ export default function Downstreams({ downstreams }: Props) {
     <div className="panel">
       <h2>Downstream health</h2>
       <div className="downstreams">
+        <DownstreamCard title="Payment" health={downstreams.payment} />
         <DownstreamCard title="Restaurant" health={downstreams.restaurant} />
         <DownstreamCard title="Courier" health={downstreams.courier} />
       </div>
