@@ -1,0 +1,237 @@
+name: dinner-rush
+
+# All tunables below use ${VAR:-default} so `docker compose up` works with no
+# .env at all; copy .env.example to .env to override any of them. See README.
+
+x-infra-env: &infra-env
+  POSTGRES_USER: ${POSTGRES_USER:-dinner}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dinner}
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  RABBITMQ_USER: ${RABBITMQ_USER:-dinner}
+  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-dinner}
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+
+x-app-defaults: &app-defaults
+  restart: unless-stopped
+
+services:
+  # ---------------- infrastructure ----------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dinner}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dinner}
+      POSTGRES_DB: ${POSTGRES_USER:-dinner}
+    ports: ["5432:5432"]
+    volumes:
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dinner}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-dinner}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-dinner}
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  # ---------------- application services ----------------
+  ingestion:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/ingestion/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: ingestion-svc
+    ports: ["8001:8001"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  orchestrator:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/orchestrator/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: orchestrator-svc
+      RESTAURANT_URL: http://restaurant:8003
+      COURIER_URL: http://courier:8004
+      DOWNSTREAM_TIMEOUT_SECONDS: ${DOWNSTREAM_TIMEOUT_SECONDS:-3.0}
+      HTTP_MAX_RETRIES: ${HTTP_MAX_RETRIES:-3}
+      HTTP_BACKOFF_BASE_SECONDS: ${HTTP_BACKOFF_BASE_SECONDS:-0.2}
+      HTTP_BACKOFF_MAX_SECONDS: ${HTTP_BACKOFF_MAX_SECONDS:-2.0}
+      BROKER_MAX_ATTEMPTS: ${BROKER_MAX_ATTEMPTS:-6}
+      RETRY_QUEUE_TTL_MS: ${RETRY_QUEUE_TTL_MS:-5000}
+      CIRCUIT_FAIL_THRESHOLD: ${CIRCUIT_FAIL_THRESHOLD:-5}
+      CIRCUIT_OPEN_SECONDS: ${CIRCUIT_OPEN_SECONDS:-10}
+      COOK_SECONDS: ${COOK_SECONDS:-2.0}
+      DELIVERY_DRIVE_SECONDS: ${DELIVERY_DRIVE_SECONDS:-2.0}
+      CANCEL_RATE: ${CANCEL_RATE:-0.0}
+      ORCH_PREFETCH: ${ORCH_PREFETCH:-64}
+      DLQ_REPLAY_INTERVAL_SECONDS: ${DLQ_REPLAY_INTERVAL_SECONDS:-15}
+    ports: ["8002:8002"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  restaurant:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/restaurant/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: restaurant-svc
+      RESTAURANT_BASE_LATENCY_MS: ${RESTAURANT_BASE_LATENCY_MS:-150}
+      RESTAURANT_JITTER_MS: ${RESTAURANT_JITTER_MS:-400}
+      RESTAURANT_FAILURE_RATE: ${RESTAURANT_FAILURE_RATE:-0.12}
+      RESTAURANT_TIMEOUT_RATE: ${RESTAURANT_TIMEOUT_RATE:-0.04}
+      RESTAURANT_RATE_LIMIT_RPS: ${RESTAURANT_RATE_LIMIT_RPS:-25}
+      RESTAURANT_OUTAGE_PROB: ${RESTAURANT_OUTAGE_PROB:-0.0}
+      RESTAURANT_OUTAGE_SECONDS: ${RESTAURANT_OUTAGE_SECONDS:-20}
+    ports: ["8003:8003"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8003/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  courier:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/courier/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: courier-svc
+      COURIER_BASE_LATENCY_MS: ${COURIER_BASE_LATENCY_MS:-200}
+      COURIER_JITTER_MS: ${COURIER_JITTER_MS:-500}
+      COURIER_FAILURE_RATE: ${COURIER_FAILURE_RATE:-0.12}
+      COURIER_TIMEOUT_RATE: ${COURIER_TIMEOUT_RATE:-0.04}
+      COURIER_RATE_LIMIT_RPS: ${COURIER_RATE_LIMIT_RPS:-25}
+      COURIER_OUTAGE_PROB: ${COURIER_OUTAGE_PROB:-0.0}
+      COURIER_OUTAGE_SECONDS: ${COURIER_OUTAGE_SECONDS:-20}
+    ports: ["8004:8004"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8004/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  dashboard-api:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/dashboard_api/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: dashboard-api
+      ORCHESTRATOR_URL: http://orchestrator:8002
+      RESTAURANT_URL: http://restaurant:8003
+      COURIER_URL: http://courier:8004
+      LOADGEN_URL: http://load-gen:8006
+      RABBITMQ_MGMT_URL: http://rabbitmq:15672
+      DASHBOARD_PUSH_INTERVAL_MS: ${DASHBOARD_PUSH_INTERVAL_MS:-1000}
+    ports: ["8005:8005"]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8005/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  load-gen:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/load_gen/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: load-gen
+      INGESTION_URL: http://ingestion:8001
+      LOADGEN_BASELINE_RPS: ${LOADGEN_BASELINE_RPS:-3}
+      LOADGEN_RUSH_RPS: ${LOADGEN_RUSH_RPS:-80}
+      LOADGEN_RUSH_RAMP_SECONDS: ${LOADGEN_RUSH_RAMP_SECONDS:-5}
+      LOADGEN_AUTOSTART: ${LOADGEN_AUTOSTART:-1}
+      LOADGEN_DUP_RATE: ${LOADGEN_DUP_RATE:-0.0}
+    ports: ["8006:8006"]
+    depends_on:
+      ingestion: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8006/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  dashboard-web:
+    <<: *app-defaults
+    build: { context: ./web, dockerfile: Dockerfile }
+    ports: ["8080:80"]
+    depends_on:
+      dashboard-api: { condition: service_started }
+
+  # ---------------- observability ----------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports: ["9090:9090"]
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3000:3000"]
+    depends_on:
+      prometheus: { condition: service_started }
+    restart: unless-stopped
+
+volumes:
+  pgdata:
