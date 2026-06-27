@@ -50,8 +50,11 @@ _ALLOWED: dict[State, frozenset[State]] = {
 }
 
 # Which downstream a given "enter this state" step depends on. Used by the
-# orchestrator to decide whether a transition needs a fulfillment call.
+# orchestrator to decide whether a transition needs a downstream call.
+# Entering "confirmed" authorizes payment (Stripe-style); "preparing" fires the
+# restaurant ticket; "out_for_delivery" dispatches the courier.
 STAGE_DOWNSTREAM: dict[State, str] = {
+    State.CONFIRMED: "payment",
     State.PREPARING: "restaurant",
     State.OUT_FOR_DELIVERY: "courier",
 }

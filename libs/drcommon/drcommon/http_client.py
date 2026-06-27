@@ -164,9 +164,10 @@ class ResilientClient:
         raw = min(self.backoff_max, self.backoff_base * (2 ** (attempt - 1)))
         return random.uniform(0, raw)
 
-    async def post_json(self, path: str, payload: dict) -> dict:
+    async def post_json(self, path: str, payload: dict, headers: dict | None = None) -> dict:
         """POST JSON with retries + breaker. Returns parsed JSON on 2xx.
 
+        ``headers`` carries per-call headers such as a Stripe ``Idempotency-Key``.
         Raises BreakerOpen / TransientExhausted / PermanentError otherwise.
         """
         if not self.breaker.allow():
@@ -178,7 +179,7 @@ class ResilientClient:
         for attempt in range(1, attempts + 1):
             started = time.monotonic()
             try:
-                resp = await self._client.post(path, json=payload)
+                resp = await self._client.post(path, json=payload, headers=headers)
                 latency_ms = (time.monotonic() - started) * 1000
                 self.stats.observe_latency(latency_ms)
 
@@ -206,9 +207,10 @@ class ResilientClient:
                         continue
                     break
 
-                # Other 4xx: definitive, do not retry.
-                self.stats.failures += 1
-                self.breaker.record_failure()
+                # Other 4xx: a definitive answer from a healthy downstream (e.g.
+                # a declined card, 402). Do not retry, and do not trip the
+                # breaker: the service is up, it simply rejected this request.
+                self.breaker.record_success()
                 raise PermanentError(resp.status_code, resp.text[:500])
 
             except (httpx.TimeoutException, httpx.TransportError) as exc:
