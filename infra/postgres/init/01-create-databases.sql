@@ -3,5 +3,6 @@
 -- then creates its own tables idempotently on startup.
 CREATE DATABASE ingestion;
 CREATE DATABASE orchestrator;
+CREATE DATABASE payment;
 CREATE DATABASE restaurant;
 CREATE DATABASE courier;

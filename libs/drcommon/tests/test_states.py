@@ -53,11 +53,12 @@ def test_cancelled_only_from_early_stages():
 
 
 def test_stage_downstreams():
+    assert STAGE_DOWNSTREAM[State.CONFIRMED] == "payment"
     assert STAGE_DOWNSTREAM[State.PREPARING] == "restaurant"
     assert STAGE_DOWNSTREAM[State.OUT_FOR_DELIVERY] == "courier"
-    # internal stages call no downstream
-    assert State.CONFIRMED not in STAGE_DOWNSTREAM
+    # internal stages call no downstream (kitchen cook time, driving time)
     assert State.READY not in STAGE_DOWNSTREAM
+    assert State.DELIVERED not in STAGE_DOWNSTREAM
 
 
 def test_op_id_is_deterministic_and_unique_per_step():

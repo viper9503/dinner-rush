@@ -14,6 +14,7 @@ agree only on what is written here and in `libs/drcommon`.
 | courier-svc    | 8004 | POST /fulfill, /control                 |
 | dashboard-api  | 8005 | /stream (SSE), /snapshot, control proxy |
 | load-gen       | 8006 | /rush, /baseline, /control              |
+| payment-svc    | 8007 | POST /v1/payment_intents, /control      |
 | dashboard-web  | 8080 | static SPA                             |
 | rabbitmq       | 5672 / 15672 (mgmt)                            |
 | postgres       | 5432 |                                        |
@@ -23,7 +24,7 @@ agree only on what is written here and in `libs/drcommon`.
 
 ## Databases (one per service, in a single Postgres instance)
 
-`ingestion`, `orchestrator`, `restaurant`, `courier`. Created by
+`ingestion`, `orchestrator`, `payment`, `restaurant`, `courier`. Created by
 `infra/postgres/init`. Each service runs idempotent `CREATE TABLE IF NOT EXISTS`
 migrations on boot. dashboard-api and load-gen have no database.
 
@@ -59,9 +60,10 @@ Deterministic per step, so redelivery yields the same id. Enforced by the
 ## Lifecycle (drives which advance steps call a downstream)
 
 `placed -> confirmed -> preparing -> ready -> out_for_delivery -> delivered`
-plus `cancelled` / `failed`. Entering `preparing` calls restaurant-svc; entering
+plus `cancelled` / `failed`. Entering `confirmed` authorizes payment (payment-svc,
+Stripe-style); entering `preparing` calls restaurant-svc; entering
 `out_for_delivery` calls courier-svc (see `STAGE_DOWNSTREAM`). All other steps are
-internal think-time.
+internal think-time. A declined card (402) moves the order to `failed`.
 
 ## HTTP surfaces
 
@@ -69,7 +71,10 @@ internal think-time.
   Duplicate idempotency_key -> `200` with the original order_id.
 - downstream `POST /fulfill` body `FulfillRequest` -> `200 FulfillResult`
   (or 503 down / 429 rate-limited / 500 fail / 504 timeout). Idempotent on op_id.
-- downstream `GET/POST /control`, `POST /control/down`, `POST /control/up`.
+- payment `POST /v1/payment_intents` with header `Idempotency-Key: <op_id>`,
+  body `{amount, currency, order_id, metadata}` -> `200` payment_intent
+  (or `402` declined / 503 down / 429 / 502 / 504). Idempotent on the key.
+- downstream/payment `GET/POST /control`, `POST /control/down`, `POST /control/up`.
 - orchestrator `GET /orders/{id}`, `GET /downstreams`, `GET /stats`,
   `POST /admin/replay-dlq`.
 - dashboard-api `GET /snapshot`, `GET /stream` (SSE), and control-proxy POSTs:
@@ -87,6 +92,7 @@ internal think-time.
   "retries": {"broker_retries": 0, "dlq_depth": 0},
   "queues": {"advance": 0, "retry": 0, "dlq": 0},
   "downstreams": {
+    "payment":    {"breaker": "closed", "error_rate": 0.0, "avg_latency_ms": 0, "down": false},
     "restaurant": {"breaker": "closed", "error_rate": 0.0, "avg_latency_ms": 0, "down": false},
     "courier":    {"breaker": "closed", "error_rate": 0.0, "avg_latency_ms": 0, "down": false}
   },

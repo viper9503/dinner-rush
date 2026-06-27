@@ -84,6 +84,7 @@ services:
     environment:
       <<: *infra-env
       SERVICE_NAME: orchestrator-svc
+      PAYMENT_URL: http://payment:8007
       RESTAURANT_URL: http://restaurant:8003
       COURIER_URL: http://courier:8004
       DOWNSTREAM_TIMEOUT_SECONDS: ${DOWNSTREAM_TIMEOUT_SECONDS:-3.0}
@@ -104,6 +105,7 @@ services:
       postgres: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
+      payment: { condition: service_started }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8002/health').status==200 else 1)"]
       interval: 10s
@@ -157,6 +159,30 @@ services:
       retries: 6
       start_period: 20s
 
+  payment:
+    <<: *app-defaults
+    build: { context: ., dockerfile: services/payment/Dockerfile }
+    environment:
+      <<: *infra-env
+      SERVICE_NAME: payment-svc
+      PAYMENT_BASE_LATENCY_MS: ${PAYMENT_BASE_LATENCY_MS:-120}
+      PAYMENT_JITTER_MS: ${PAYMENT_JITTER_MS:-200}
+      PAYMENT_FAILURE_RATE: ${PAYMENT_FAILURE_RATE:-0.05}
+      PAYMENT_TIMEOUT_RATE: ${PAYMENT_TIMEOUT_RATE:-0.02}
+      PAYMENT_RATE_LIMIT_RPS: ${PAYMENT_RATE_LIMIT_RPS:-50}
+      PAYMENT_DECLINE_RATE: ${PAYMENT_DECLINE_RATE:-0.07}
+      PAYMENT_OUTAGE_PROB: ${PAYMENT_OUTAGE_PROB:-0.0}
+      PAYMENT_OUTAGE_SECONDS: ${PAYMENT_OUTAGE_SECONDS:-20}
+    ports: ["8007:8007"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8007/health').status==200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   dashboard-api:
     <<: *app-defaults
     build: { context: ., dockerfile: services/dashboard_api/Dockerfile }
@@ -164,6 +190,7 @@ services:
       <<: *infra-env
       SERVICE_NAME: dashboard-api
       ORCHESTRATOR_URL: http://orchestrator:8002
+      PAYMENT_URL: http://payment:8007
       RESTAURANT_URL: http://restaurant:8003
       COURIER_URL: http://courier:8004
       LOADGEN_URL: http://load-gen:8006

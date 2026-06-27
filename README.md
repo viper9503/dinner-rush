@@ -33,6 +33,7 @@ load generator begins a quiet baseline drip on its own.
 | ingestion API              | http://localhost:8001        | `POST /orders`                 |
 | orchestrator API           | http://localhost:8002        | `/orders/{id}`, `/downstreams` |
 | restaurant / courier       | http://localhost:8003 / 8004 | `/control` to tune flakiness   |
+| payment-svc                | http://localhost:8007        | Stripe-style, `/control`       |
 | load-gen                   | http://localhost:8006        | `/rush`, `/baseline`, `/stop`  |
 
 Every service also exposes `/health` and `/metrics`.
@@ -72,11 +73,15 @@ blocks on a downstream.
 Click **Break Restaurant** (or Courier) while traffic is flowing. Or:
 
 ```bash
-curl -X POST http://localhost:8003/control/down     # hard down
-curl -X POST http://localhost:8004/control/down
+curl -X POST http://localhost:8003/control/down     # restaurant hard down
+curl -X POST http://localhost:8004/control/down     # courier hard down
+curl -X POST http://localhost:8007/control/down     # payment provider hard down
 # or degrade instead of kill:
 curl -X POST http://localhost:8003/control -H 'content-type: application/json' \
      -d '{"failure_rate":0.8,"base_latency_ms":1500}'
+# or crank up card declines to watch orders fail at the payment stage:
+curl -X POST http://localhost:8007/control -H 'content-type: application/json' \
+     -d '{"decline_rate":0.5}'
 ```
 
 Watch the dashboard: the affected downstream's circuit breaker trips to **open**,
@@ -115,10 +120,10 @@ message broker (and HTTP for synchronous reads and fulfillment calls).
 ```
  load-gen --HTTP--> ingestion --(order.placed)--> [RabbitMQ] --> orchestrator
                                                                   |   ^  |
-                                              HTTP /fulfill -------+   |  +--> (order.transition)
-                                              (idempotent, retried)   |          |
-                                          restaurant   courier        |          v
-                                          (flaky)      (flaky)        retry/DLQ   dashboard-api --SSE--> dashboard-web
+                                  HTTP (idempotent, retried) -------+   |  +--> (order.transition)
+                                  /v1/payment_intents | /fulfill      |          |
+                                  payment  restaurant  courier        |          v
+                                  (flaky)  (flaky)     (flaky)       retry/DLQ   dashboard-api --SSE--> dashboard-web
 ```
 
 - **ingestion-svc** accepts orders at high volume, persists them, and publishes
@@ -127,6 +132,9 @@ message broker (and HTTP for synchronous reads and fulfillment calls).
 - **orchestrator-svc** owns the lifecycle state machine. It consumes commands,
   enforces legal transitions only, calls the downstreams for the fulfillment
   stages, and persists every transition.
+- **payment-svc** is a simulated Stripe-style payment provider. The order is
+  authorized (Stripe-style `PaymentIntents` with an `Idempotency-Key`) before it
+  is confirmed; a declined card moves the order to `failed`.
 - **restaurant-svc / courier-svc** are simulated external systems: slow,
   rate-limited, randomly failing, and able to fall over and recover. Tunable at
   runtime via `/control`.
@@ -173,9 +181,11 @@ operation id, `"{order_id}:{from}->{to}"`, identical on any redelivery. The
 durable authority is a **unique constraint on that op id in Postgres**: a second
 attempt to apply the same step loses the race and becomes a no-op. The
 downstreams dedup the same way (a `dispatches` table), so a courier is dispatched
-exactly once even when the fulfillment command is retried. At-least-once delivery
-plus idempotent consumers gives exactly-once *effects*; we never claim
-exactly-once *delivery*.
+exactly once even when the fulfillment command is retried. The payment provider
+uses the same op id as a **Stripe-style `Idempotency-Key`**, so a retried
+authorization returns the original charge and never bills the customer twice. At-
+least-once delivery plus idempotent consumers gives exactly-once *effects*; we
+never claim exactly-once *delivery*.
 
 **Recovery.** Two retry tiers: the HTTP client retries fast in-process with
 exponential backoff + jitter and a **circuit breaker** per downstream (open ->
@@ -224,7 +234,7 @@ to `.env` to override (compose reads it automatically). The most useful ones:
 ```
 libs/drcommon/      shared infra: broker, db, outbox, idempotency, http client,
                     state machine, downstream simulator (one import site)
-services/           ingestion, orchestrator, restaurant, courier,
+services/           ingestion, orchestrator, payment, restaurant, courier,
                     dashboard_api, load_gen (each its own container)
 web/                React + Recharts dashboard, served by nginx
 infra/              postgres init, prometheus, grafana provisioning

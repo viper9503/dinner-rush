@@ -76,6 +76,24 @@ def test_open_breaker_short_circuits_without_calling():
     asyncio.run(rc.aclose())
 
 
+def test_4xx_is_permanent_and_does_not_trip_breaker():
+    from drcommon.http_client import PermanentError
+
+    def handler(req):
+        return httpx.Response(402, json={"error": {"code": "card_declined"}})
+
+    rc = _client(handler)
+    for _ in range(5):  # well past the fail_threshold of 2
+        try:
+            asyncio.run(rc.post_json("/v1/payment_intents", {}))
+            assert False, "expected PermanentError"
+        except PermanentError:
+            pass
+    # A declined card is a healthy 4xx; the breaker must stay closed.
+    assert rc.breaker.state is BreakerState.CLOSED
+    asyncio.run(rc.aclose())
+
+
 class _FakeRedis:
     def __init__(self):
         self.store = {}
