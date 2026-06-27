@@ -155,6 +155,9 @@ class Orchestrator:
             open_seconds=env_float("CIRCUIT_OPEN_SECONDS", 10.0),
         )
         self.clients = {
+            "payment": ResilientClient(
+                base_url=env_str("PAYMENT_URL", "http://payment:8007"),
+                name="payment", **common),
             "restaurant": ResilientClient(
                 base_url=env_str("RESTAURANT_URL", "http://restaurant:8003"),
                 name="restaurant", **common),
@@ -265,7 +268,8 @@ class Orchestrator:
 
         async with self.db.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT state, customer_id, restaurant_id FROM orders WHERE order_id = $1", order_id
+                "SELECT state, customer_id, restaurant_id, total_cents FROM orders WHERE order_id = $1",
+                order_id,
             )
         if row is None:
             # Order not created yet (relay lag); retry shortly.
@@ -334,21 +338,36 @@ class Orchestrator:
         self, name, order_id, op_id, target, row, env, message,
     ) -> dict | None:
         client = self.clients[name]
-        req = FulfillRequest(
-            order_id=order_id, op_id=op_id, stage=target.value,
-            customer_id=row["customer_id"], restaurant_id=row["restaurant_id"],
-        )
         try:
-            result = await client.post_json("/fulfill", req.model_dump())
+            if name == "payment":
+                # Stripe-style call: the deterministic op_id is the idempotency
+                # key, so a retried authorization never charges twice.
+                result = await client.post_json(
+                    "/v1/payment_intents",
+                    {"amount": int(row["total_cents"] or 0), "currency": "usd",
+                     "order_id": order_id, "metadata": {"order_id": order_id}},
+                    headers={"Idempotency-Key": op_id},
+                )
+                detail = {"payment_intent_id": result.get("id"), "amount": result.get("amount")}
+            else:
+                req = FulfillRequest(
+                    order_id=order_id, op_id=op_id, stage=target.value,
+                    customer_id=row["customer_id"], restaurant_id=row["restaurant_id"],
+                )
+                result = await client.post_json("/fulfill", req.model_dump())
+                detail = result.get("detail", {})
             m_downstream.labels(name=name, result="ok").inc()
-            return result.get("detail", {})
+            return detail
         except (BreakerOpen, TransientExhausted) as exc:
             m_downstream.labels(name=name, result="transient").inc()
             await self._retry_or_dlq(env, message, f"{name}: {exc}")
             return None
         except PermanentError as exc:
+            # A definitive 4xx (e.g. a declined card, 402) is a terminal business
+            # failure, not something to retry: fail the order.
             m_downstream.labels(name=name, result="permanent").inc()
-            await self._fail_order(order_id, State(row["state"]), f"{name} permanent: {exc}", env.attempt)
+            cause = "payment declined" if name == "payment" else f"{name} rejected"
+            await self._fail_order(order_id, State(row["state"]), f"{cause}: {exc}", env.attempt)
             m_advance.labels(result="failed").inc()
             await message.ack()
             return None
