@@ -237,6 +237,26 @@ services:
     depends_on:
       dashboard-api: { condition: service_started }
 
+  # Customer-facing storefront. A stateless Next.js app: it places orders through
+  # ingestion and reads them back through the orchestrator, the same front door
+  # and read API as everything else. It owns no database.
+  customer-web:
+    <<: *app-defaults
+    build: { context: ./customer-web, dockerfile: Dockerfile }
+    environment:
+      INGESTION_URL: http://ingestion:8001
+      ORCHESTRATOR_URL: http://orchestrator:8002
+    ports: ["8090:3000"]
+    depends_on:
+      ingestion: { condition: service_started }
+      orchestrator: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+
   # ---------------- observability ----------------
   prometheus:
     image: prom/prometheus:v2.54.1

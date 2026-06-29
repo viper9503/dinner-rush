@@ -1,0 +1,146 @@
+@import "tailwindcss";
+
+/* ----------------------------------------------------------------------------
+   Dinner Rush — "Sunset Market" design system
+   Warm cream canvas, AA-safe sunset primary, grape secondary, citrus accents.
+---------------------------------------------------------------------------- */
+@theme {
+  --color-background: #fff8f0;
+  --color-surface: #ffffff;
+  --color-foreground: #1a0b2e;
+
+  --color-primary: #c7341a;
+  --color-primary-bright: #e8431f;
+  --color-primary-foreground: #ffffff;
+
+  --color-secondary: #6d28c9;
+  --color-secondary-foreground: #ffffff;
+
+  --color-accent: #ffb020;
+  --color-accent-ink: #1a0b2e;
+  --color-accent-alt: #d6266e;
+
+  --color-muted: #fbeee4;
+  --color-muted-foreground: #6b5b73;
+  --color-border: #f3dcc9;
+
+  --color-success: #157a4e;
+  --color-warning: #b45309;
+
+  /* cuisine rails */
+  --color-italian: #d6266e;
+  --color-mexican: #e8431f;
+  --color-asian: #6d28c9;
+  --color-healthy: #157a4e;
+  --color-bbq: #ffb020;
+  --color-mediterranean: #0e7490;
+  --color-breakfast: #f4a21e;
+  --color-indian: #c2410c;
+
+  --font-display: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+
+  --radius: 1.25rem;
+  --radius-card: 1.25rem;
+
+  --shadow-soft: 0 2px 4px rgba(26, 11, 46, 0.04), 0 18px 40px -24px rgba(232, 67, 31, 0.22);
+  --shadow-lift: 0 8px 16px rgba(26, 11, 46, 0.06), 0 30px 60px -28px rgba(232, 67, 31, 0.38);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: #ffd9a8;
+    color: #1a0b2e;
+  }
+  /* warm-tinted, rounded scrollbar */
+  * {
+    scrollbar-color: #f3dcc9 transparent;
+  }
+}
+
+/* ---- signature gradients & helpers ---------------------------------------- */
+.bg-sunset {
+  background-image: linear-gradient(135deg, #ffb020 0%, #ff6a2b 40%, #e8431f 72%, #d6266e 100%);
+}
+.bg-sunset-soft {
+  background-image: linear-gradient(135deg, #ffc24d 0%, #ff7a33 52%, #f0481f 100%);
+}
+.bg-grape {
+  background-image: linear-gradient(135deg, #7c3aed 0%, #d6266e 58%, #e8431f 100%);
+}
+.bg-radial-warm {
+  background-image: radial-gradient(120% 120% at 0% 0%, #ffe3c2 0%, #fff8f0 46%, #ffffff 100%);
+}
+.bg-conic-sunset {
+  background-image: conic-gradient(from 210deg at 50% 50%, #ffb020, #e8431f, #d6266e, #6d28c9, #ffb020);
+}
+.text-gradient-sunset {
+  background-image: linear-gradient(135deg, #ff7a33, #e8431f, #d6266e);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.scrim {
+  background-image: linear-gradient(180deg, transparent 38%, rgba(26, 11, 46, 0.58) 100%);
+}
+.glass {
+  background-color: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 32px -8px rgba(109, 40, 201, 0.25);
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+.shadow-soft {
+  box-shadow: var(--shadow-soft);
+}
+.shadow-lift {
+  box-shadow: var(--shadow-lift);
+}
+
+/* ---- decorative blobs & animations --------------------------------------- */
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-14px) rotate(4deg); }
+}
+@keyframes float-slower {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(18px) rotate(-5deg); }
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+.animate-float-slow { animation: float-slow 7s ease-in-out infinite; }
+.animate-float-slower { animation: float-slower 9s ease-in-out infinite; }
+.animate-marquee { animation: marquee 32s linear infinite; }
+
+.marquee-mask {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 8%, #000 92%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

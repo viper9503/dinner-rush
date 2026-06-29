@@ -18,15 +18,16 @@ the system recovers on its own when a downstream falls over and comes back.
 docker compose up --build
 ```
 
-That brings up everything: the seven services, RabbitMQ, Postgres, Redis,
-Prometheus, and Grafana. Schema migrations run automatically on startup and the
-load generator begins a quiet baseline drip on its own.
+That brings up everything: the seven backend services, both web UIs, RabbitMQ,
+Postgres, Redis, Prometheus, and Grafana. Schema migrations run automatically on
+startup and the load generator begins a quiet baseline drip on its own.
 
 ### URLs
 
 | What                       | URL                          | Notes                          |
 |----------------------------|------------------------------|--------------------------------|
-| **Live dashboard**         | http://localhost:8080        | the main view, auto-updating   |
+| **Ops dashboard**          | http://localhost:8080        | the live pipeline view         |
+| **Customer storefront**    | http://localhost:8090        | place a real order, track it   |
 | Grafana                    | http://localhost:3000        | anonymous viewer, admin/admin  |
 | Prometheus                 | http://localhost:9090        | raw metrics                    |
 | RabbitMQ management        | http://localhost:15672       | dinner / dinner                |
@@ -110,6 +111,20 @@ The dashboard shows per-state counts, throughput, in-flight, retry and DLQ
 depth, and per-downstream breaker state / latency / error rate throughout. For
 deeper metrics, Grafana's "Dinner Rush - Pipeline" dashboard comes up populated.
 
+### 5. Place a real order (customer storefront)
+
+Open the **storefront** at http://localhost:8090, browse restaurants, add a few
+dishes to the bundle, and check out as a guest. You land on a live tracker that
+follows your order through the same funnel the ops dashboard shows, in real time
+over SSE. Because a catering bundle can span several restaurants and a pipeline
+order is single-restaurant, checkout fans the cart out into **one order per
+restaurant**; the tracker shows each kitchen's state independently and an overall
+status that is the least-advanced of them. Break a downstream (scenario 3) while
+an order is in flight and watch that one order stall and then recover, from the
+customer's point of view. The storefront places and reads orders through the
+same ingestion and orchestrator APIs as everything else, so it inherits the same
+durability and idempotency guarantees with no special path.
+
 ---
 
 ## Architecture
@@ -141,8 +156,12 @@ message broker (and HTTP for synchronous reads and fulfillment calls).
 - **dashboard-api** aggregates a live snapshot and pushes it to the browser over
   SSE; it is also the only origin the web app talks to (it proxies control
   actions).
-- **dashboard-web** is the auto-updating React UI.
+- **dashboard-web** is the auto-updating React UI (the ops view).
 - **load-gen** generates controllable, realistic traffic.
+- **customer-web** is a customer-facing storefront (Next.js): browse, build a
+  multi-restaurant bundle, check out, and track the order live. It owns no
+  database; it places orders through ingestion and reads them back through the
+  orchestrator, the same front door and read API as everything else.
 
 ### Why these choices
 
@@ -165,6 +184,18 @@ message broker (and HTTP for synchronous reads and fulfillment calls).
 - **Python / FastAPI** for small, readable, async services. **React + Recharts**
   over **SSE** for a one-directional live feed (simpler than WebSocket here).
   **Prometheus + Grafana**, provisioned via config so they come up populated.
+- **A stateless storefront over the existing APIs.** The customer-web container
+  (Next.js) deliberately keeps no state of its own: checkout calls ingestion and
+  the tracker reads the orchestrator, so a customer order travels the exact same
+  outbox + idempotency path as load-generated traffic and cannot bypass it. The
+  one impedance mismatch, a catering bundle spans many restaurants but a pipeline
+  order is single-restaurant, is resolved by fanning a cart out into one order
+  per restaurant (each with its own derived idempotency key) and recomposing them
+  into a single cart view on read. The cart "id" is a stateless token (the order
+  ids encoded), so the storefront needs no database to map a cart back to its
+  orders. Trade-off: a real storefront would own a customer/account store and a
+  cart service; that is out of scope here, where the point is to show the
+  resilience pipeline driving a real user-facing flow.
 
 ---
 
@@ -236,7 +267,9 @@ libs/drcommon/      shared infra: broker, db, outbox, idempotency, http client,
                     state machine, downstream simulator (one import site)
 services/           ingestion, orchestrator, payment, restaurant, courier,
                     dashboard_api, load_gen (each its own container)
-web/                React + Recharts dashboard, served by nginx
+web/                React + Recharts ops dashboard, served by nginx
+customer-web/       Next.js customer storefront (stateless; talks to ingestion
+                    + orchestrator), one order per restaurant
 infra/              postgres init, prometheus, grafana provisioning
 docs/CONTRACT.md    the locked cross-service integration contract
 docker-compose.yml  brings up the whole system
